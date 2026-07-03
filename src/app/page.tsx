@@ -1,19 +1,21 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Upload, Play, Download, Eye, EyeOff, ExternalLink, Loader2 } from "lucide-react";
+import { Upload, Play, Download, Loader2 } from "lucide-react";
 
-type Engine = "gtts" | "elevenlabs";
+interface Voice {
+  Name: string;
+  ShortName: string;
+  FriendlyName: string;
+  Gender: string;
+  Locale: string;
+}
 
 export default function Home() {
   const [srtFile, setSrtFile] = useState<File | null>(null);
-  const [engine, setEngine] = useState<Engine>("gtts");
-  const [apiKey, setApiKey] = useState("");
-  const [voiceId, setVoiceId] = useState("");
-  const [modelId, setModelId] = useState("eleven_flash_v2_5");
-  const [gttsLang, setGttsLang] = useState("en");
-  const [gttsAccent, setGttsAccent] = useState("co.in");
-  const [showApi, setShowApi] = useState(false);
+  const [voices, setVoices] = useState<Voice[]>([]);
+  const [edgeVoice, setEdgeVoice] = useState("");
+  const [localeFilter, setLocaleFilter] = useState("all");
   const [running, setRunning] = useState(false);
   const [logs, setLogs] = useState<string[]>(["Ready. Select an SRT file and click Start."]);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
@@ -30,15 +32,27 @@ export default function Home() {
     };
   }, [downloadUrl]);
 
+  useEffect(() => {
+    fetch("/api/voices")
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setVoices(data);
+          const en = data.find((v: Voice) => v.ShortName === "en-US-AriaNeural");
+          if (en) setEdgeVoice(en.ShortName);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const locales = [...new Set(voices.map((v) => v.Locale))].sort();
+  const filteredVoices = localeFilter === "all" ? voices : voices.filter((v) => v.Locale === localeFilter);
+
   const addLog = (msg: string) => setLogs((prev) => [...prev, msg]);
 
   const handleStart = async () => {
     if (!srtFile) {
       addLog("⚠️ Please select an SRT file first.");
-      return;
-    }
-    if (engine === "elevenlabs" && !apiKey.trim()) {
-      addLog("⚠️ Please enter your ElevenLabs API Key.");
       return;
     }
 
@@ -49,12 +63,7 @@ export default function Home() {
 
     const form = new FormData();
     form.append("srt", srtFile);
-    form.append("engine", engine);
-    form.append("apiKey", apiKey);
-    form.append("voiceId", voiceId);
-    form.append("modelId", modelId);
-    form.append("gttsLang", gttsLang);
-    form.append("gttsAccent", gttsAccent);
+    form.append("edgeVoice", edgeVoice);
 
     try {
       const res = await fetch("/api/convert", {
@@ -102,11 +111,10 @@ export default function Home() {
     <div className="mx-auto max-w-3xl p-6">
       <header className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight">SRT → Audio</h1>
-        <p className="text-sm text-zinc-500">Convert subtitles to speech via gTTS or ElevenLabs</p>
+        <p className="text-sm text-zinc-500">Convert subtitles to speech via Microsoft Edge TTS</p>
       </header>
 
       <section className="rounded-lg border border-zinc-800 bg-zinc-900 p-5">
-        <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-zinc-400">Source &amp; Settings</h2>
         <div className="mb-4">
           <label className="mb-1 block text-sm text-zinc-400">SRT file</label>
           {srtFile ? (
@@ -140,110 +148,37 @@ export default function Home() {
             </label>
           )}
         </div>
+
+        <div className="mb-4">
+          <label className="mb-1 block text-sm text-zinc-400">Locale</label>
+          <select
+            value={localeFilter}
+            onChange={(e) => setLocaleFilter(e.target.value)}
+            className="w-full rounded bg-zinc-800 px-3 py-2 text-sm outline-none ring-1 ring-zinc-700 focus:ring-emerald-500"
+          >
+            <option value="all">All locales</option>
+            {locales.map((loc) => (
+              <option key={loc} value={loc}>{loc}</option>
+            ))}
+          </select>
+        </div>
+
         <div>
-          <label className="mb-1 block text-sm text-zinc-400">Engine</label>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setEngine("gtts")}
-              className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
-                engine === "gtts" ? "bg-emerald-600 text-white" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
-              }`}
-            >
-              gTTS (Free)
-            </button>
-            <button
-              onClick={() => setEngine("elevenlabs")}
-              className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
-                engine === "elevenlabs" ? "bg-emerald-600 text-white" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
-              }`}
-            >
-              ElevenLabs
-            </button>
-          </div>
+          <label className="mb-1 block text-sm text-zinc-400">Voice</label>
+          <select
+            value={edgeVoice}
+            onChange={(e) => setEdgeVoice(e.target.value)}
+            className="w-full rounded bg-zinc-800 px-3 py-2 text-sm outline-none ring-1 ring-zinc-700 focus:ring-emerald-500"
+          >
+            {filteredVoices.length === 0 && <option value="">Loading voices…</option>}
+            {filteredVoices.map((v) => (
+              <option key={v.ShortName} value={v.ShortName}>
+                {v.FriendlyName} ({v.Gender}) — {v.Locale}
+              </option>
+            ))}
+          </select>
         </div>
       </section>
-
-      {engine === "gtts" && (
-        <section className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-zinc-400">Google Text-to-Speech (Free)</h2>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="mb-1 block text-sm text-zinc-400">Language (lang)</label>
-              <input
-                type="text"
-                value={gttsLang}
-                onChange={(e) => setGttsLang(e.target.value)}
-                className="w-full rounded bg-zinc-800 px-3 py-2 text-sm outline-none ring-1 ring-zinc-700 focus:ring-emerald-500"
-              />
-            </div>
-            <div>
-              <label className="mb-1 flex items-center gap-1 text-sm text-zinc-400">
-                Accent / Voice (tld)
-                <a
-                  href="https://gtts.readthedocs.io/en/latest/module.html#localized-accents"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-400 hover:text-blue-300"
-                >
-                  <ExternalLink size={14} />
-                </a>
-              </label>
-              <input
-                type="text"
-                value={gttsAccent}
-                onChange={(e) => setGttsAccent(e.target.value)}
-                className="w-full rounded bg-zinc-800 px-3 py-2 text-sm outline-none ring-1 ring-zinc-700 focus:ring-emerald-500"
-              />
-              <p className="mt-1 text-xs text-zinc-600">co.in (male), com (female US), co.uk (female UK)</p>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {engine === "elevenlabs" && (
-        <section className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-zinc-400">ElevenLabs (API required)</h2>
-          <div className="space-y-4">
-            <div>
-              <label className="mb-1 block text-sm text-zinc-400">API Key</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type={showApi ? "text" : "password"}
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  className="flex-1 rounded bg-zinc-800 px-3 py-2 text-sm outline-none ring-1 ring-zinc-700 focus:ring-emerald-500"
-                />
-                <button
-                  onClick={() => setShowApi(!showApi)}
-                  className="shrink-0 rounded bg-zinc-800 p-2 text-zinc-400 hover:text-zinc-200"
-                >
-                  {showApi ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="mb-1 block text-sm text-zinc-400">Voice ID</label>
-                <input
-                  type="text"
-                  value={voiceId}
-                  onChange={(e) => setVoiceId(e.target.value)}
-                  className="w-full rounded bg-zinc-800 px-3 py-2 text-sm outline-none ring-1 ring-zinc-700 focus:ring-emerald-500"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-sm text-zinc-400">Model ID</label>
-                <input
-                  type="text"
-                  value={modelId}
-                  onChange={(e) => setModelId(e.target.value)}
-                  className="w-full rounded bg-zinc-800 px-3 py-2 text-sm outline-none ring-1 ring-zinc-700 focus:ring-emerald-500"
-                />
-              </div>
-            </div>
-          </div>
-        </section>
-      )}
 
       <div className="mt-6 flex items-center gap-3">
         {running ? (
