@@ -1,5 +1,0 @@
-requests
-pydub
-srt
-tk
-gTTS

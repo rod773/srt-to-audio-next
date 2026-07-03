@@ -1,1 +1,0 @@
-create a next proyect that uses & 'd:\Descargas\srt-to-audio- next\srt_to_audio.py'this python functions width a similar interface

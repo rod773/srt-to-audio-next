@@ -10,3 +10,5 @@ tts_settings.json
 .pnp.*
 __pycache__/
 *.pyc
+
+.vercel
