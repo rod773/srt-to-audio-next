@@ -11,6 +11,15 @@ interface Voice {
   Locale: string;
 }
 
+function msToSrt(ms: number): string {
+  const totalSec = Math.floor(ms / 1000);
+  const h = String(Math.floor(totalSec / 3600)).padStart(2, "0");
+  const m = String(Math.floor((totalSec % 3600) / 60)).padStart(2, "0");
+  const s = String(totalSec % 60).padStart(2, "0");
+  const millis = String(ms % 1000).padStart(3, "0");
+  return `${h}:${m}:${s},${millis}`;
+}
+
 export default function Home() {
   const [srtFile, setSrtFile] = useState<File | null>(null);
   const [voices, setVoices] = useState<Voice[]>([]);
@@ -95,7 +104,8 @@ if (en) setEdgeVoice(en.ShortName);
             const data = JSON.parse(line);
             if (data.type === "progress") {
               const short = data.text.length > 60 ? data.text.slice(0, 60) + "…" : data.text;
-              addLog(`🎤 [${data.segment}/${data.total}] ${short}`);
+              const time = `${msToSrt(data.startMs)} → ${msToSrt(data.endMs)}`;
+              addLog(`🎤 [${data.segment}/${data.total}] ${time} ${short}`);
             } else if (data.type === "done") {
               const binaryStr = atob(data.audio);
               const bytes = new Uint8Array(binaryStr.length);

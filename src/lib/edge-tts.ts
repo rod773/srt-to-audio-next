@@ -36,7 +36,19 @@ export async function getVoices(): Promise<Voice[]> {
   return res.json();
 }
 
-export function tts(text: string, voice: string): Promise<Buffer> {
+export async function tts(text: string, voice: string, retries = 3): Promise<Buffer> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await ttsOnce(text, voice);
+    } catch (err) {
+      if (attempt === retries) throw err;
+      await new Promise((r) => setTimeout(r, attempt * 1000));
+    }
+  }
+  throw new Error("tts failed");
+}
+
+function ttsOnce(text: string, voice: string): Promise<Buffer> {
   const secMsGec = generateSecMsGec();
   const connId = uuid();
   const wsUrl =
