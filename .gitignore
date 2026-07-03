@@ -1,0 +1,8 @@
+node_modules/
+.next/
+.env
+uploads/
+output/
+*.mp3
+progress.txt
+tts_settings.json
