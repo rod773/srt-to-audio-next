@@ -1,3 +1,5 @@
+import WebSocket from "ws";
+
 const TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
 const BASE_URL = "speech.platform.bing.com/consumer/speech/synthesize/readaloud";
 
@@ -23,22 +25,29 @@ export function tts(text: string, voice: string): Promise<Buffer> {
   const wsUrl = `wss://${BASE_URL}/edge/v1?TrustedClientToken=${TOKEN}&ConnectionId=${uuid()}`;
 
   return new Promise<Buffer>((resolve, reject) => {
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(wsUrl, {
+      headers: {
+        "Origin": "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold",
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.5060.66 Safari/537.36 Edg/103.0.1264.44",
+      },
+    });
 
     const audioData: Buffer[] = [];
-    let timeout: ReturnType<typeof setTimeout> | null = null;
+    let resolved = false;
 
-    const cleanUp = () => {
-      if (timeout) clearTimeout(timeout);
+    const done = (err?: Error) => {
+      if (resolved) return;
+      resolved = true;
       try { ws.close(); } catch {}
+      if (err) reject(err);
+      else if (audioData.length > 0) resolve(Buffer.concat(audioData));
+      else reject(new Error("No audio data received"));
     };
 
-    timeout = setTimeout(() => {
-      cleanUp();
-      reject(new Error("TTS timed out after 30s"));
-    }, 30000);
+    const timeout = setTimeout(() => done(new Error("TTS timed out")), 30000);
 
-    ws.onopen = () => {
+    ws.on("open", () => {
       const config = {
         context: {
           synthesis: {
@@ -57,54 +66,33 @@ export function tts(text: string, voice: string): Promise<Buffer> {
         `X-RequestId:${uuid()}\r\nContent-Type:application/ssml+xml\r\n` +
         `X-Timestamp:${Date()}Z\r\nPath:ssml\r\n\r\n` +
         `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>` +
-        `<voice name='${voice}'>${escapeXml(text)}</voice></speak>`;
+        `<voice name='${voice}'>${text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</voice></speak>`;
       ws.send(ssml);
-    };
+    });
 
-    ws.onmessage = (event) => {
-      const data = event.data;
-      if (typeof data === "string") {
-        if (data.includes("turn.end")) {
-          cleanUp();
-          resolve(Buffer.concat(audioData));
-        }
-        return;
-      }
-
-      if (data instanceof ArrayBuffer) {
-        const buf = Buffer.from(data);
+    ws.on("message", (data, isBinary) => {
+      if (isBinary) {
+        const buf = data as Buffer;
         const sep = "Path:audio\r\n";
         const idx = buf.indexOf(sep);
-        if (idx !== -1) {
-          audioData.push(buf.subarray(idx + sep.length));
-        }
-      } else if (Array.isArray(data)) {
-        for (const chunk of data) {
-          const buf = Buffer.from(chunk);
-          const sep = "Path:audio\r\n";
-          const idx = buf.indexOf(sep);
-          if (idx !== -1) {
-            audioData.push(buf.subarray(idx + sep.length));
-          }
-        }
-      }
-    };
-
-    ws.onerror = (event) => {
-      cleanUp();
-      reject(new Error(`WebSocket error: ${(event as ErrorEvent).message || "Unknown"}`));
-    };
-
-    ws.onclose = () => {
-      if (audioData.length > 0) {
-        resolve(Buffer.concat(audioData));
+        if (idx !== -1) audioData.push(buf.subarray(idx + sep.length));
       } else {
-        reject(new Error("WebSocket closed before audio received"));
+        const msg = data.toString();
+        if (msg.includes("turn.end")) {
+          clearTimeout(timeout);
+          done();
+        }
       }
-    };
-  });
-}
+    });
 
-function escapeXml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+    ws.on("error", (err) => {
+      clearTimeout(timeout);
+      done(new Error(`WebSocket error: ${err.message}`));
+    });
+
+    ws.on("close", () => {
+      clearTimeout(timeout);
+      done();
+    });
+  });
 }
