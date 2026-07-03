@@ -1,16 +1,81 @@
 import { NextRequest, NextResponse } from "next/server";
-import { spawn, ChildProcess } from "child_process";
-import path from "path";
-import fs from "fs";
-import os from "os";
+import * as gtts from "google-tts-api";
 
-let activeProcess: ChildProcess | null = null;
+interface SrtSegment {
+  index: number;
+  startMs: number;
+  endMs: number;
+  text: string;
+}
 
-const UPLOAD_DIR = path.join(process.cwd(), "uploads");
-const OUTPUT_DIR = path.join(process.cwd(), "output");
+function parseSrt(content: string): SrtSegment[] {
+  const segments: SrtSegment[] = [];
+  const blocks = content.trim().replace(/\r\n/g, "\n").split(/\n\n+/);
+  for (const block of blocks) {
+    const lines = block.trim().split("\n");
+    if (lines.length < 3) continue;
+    const index = parseInt(lines[0], 10);
+    const m = lines[1].match(
+      /(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})/
+    );
+    if (!m) continue;
+    const toMs = (h: number, mi: number, s: number, ms: number) =>
+      h * 3600000 + mi * 60000 + s * 1000 + ms;
+    const startMs = toMs(+m[1], +m[2], +m[3], +m[4]);
+    const endMs = toMs(+m[5], +m[6], +m[7], +m[8]);
+    const text = lines.slice(2).join(" ").trim();
+    if (text) segments.push({ index, startMs, endMs, text });
+  }
+  return segments;
+}
 
-function ensureDir(dir: string) {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+async function fetchGttsAudio(
+  text: string,
+  lang: string,
+  host: string
+): Promise<Buffer> {
+  const parts = await gtts.getAllAudioUrls(text, { lang, host, slow: false });
+  const buffers: Buffer[] = [];
+  for (const part of parts) {
+    const res = await fetch(part.url, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+    });
+    if (!res.ok) throw new Error(`gTTS HTTP ${res.status}`);
+    buffers.push(Buffer.from(await res.arrayBuffer()));
+  }
+  return Buffer.concat(buffers);
+}
+
+async function fetchElevenlabsAudio(
+  text: string,
+  apiKey: string,
+  voiceId: string,
+  modelId: string
+): Promise<Buffer> {
+  const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Accept": "audio/mpeg",
+      "xi-api-key": apiKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      text,
+      model_id: modelId,
+      voice_settings: {
+        stability: 0.5,
+        similarity_boost: 0.75,
+        style: 0.0,
+        use_speaker_boost: true,
+      },
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`ElevenLabs API Error: ${res.status} ${err}`);
+  }
+  return Buffer.from(await res.arrayBuffer());
 }
 
 export async function POST(req: NextRequest) {
@@ -18,7 +83,6 @@ export async function POST(req: NextRequest) {
     const form = await req.formData();
     const srtFile = form.get("srt") as File;
     const engine = form.get("engine") as string;
-    const maxSpeed = parseFloat((form.get("maxSpeed") as string) || "1.5");
     const apiKey = (form.get("apiKey") as string) || "";
     const voiceId = (form.get("voiceId") as string) || "";
     const modelId = (form.get("modelId") as string) || "eleven_flash_v2_5";
@@ -28,95 +92,47 @@ export async function POST(req: NextRequest) {
     if (!srtFile) {
       return NextResponse.json({ error: "No SRT file provided" }, { status: 400 });
     }
+    if (engine === "elevenlabs" && !apiKey) {
+      return NextResponse.json({ error: "ElevenLabs API key required" }, { status: 400 });
+    }
 
-    ensureDir(UPLOAD_DIR);
-    ensureDir(OUTPUT_DIR);
+    const srtText = await srtFile.text();
+    const segments = parseSrt(srtText);
+    if (segments.length === 0) {
+      return NextResponse.json({ error: "No valid subtitles found" }, { status: 400 });
+    }
 
-    const ext = srtFile.name.endsWith(".srt") ? ".srt" : ".txt";
-    const srtPath = path.join(UPLOAD_DIR, `input_${Date.now()}${ext}`);
-    const buffer = Buffer.from(await srtFile.arrayBuffer());
-    fs.writeFileSync(srtPath, buffer);
+    const gttsHost = gttsAccent
+      ? `translate.google.${gttsAccent}`
+      : "translate.google.com";
 
-    const outputFile = path.join(OUTPUT_DIR, `output_${Date.now()}.mp3`);
+    const audioParts: Buffer[] = [];
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i];
+      let buf: Buffer;
 
-    const params = {
-      engine,
-      srt_path: srtPath,
-      max_speed: maxSpeed,
-      output_dir: OUTPUT_DIR,
-      api_key: apiKey,
-      voice_id: voiceId,
-      model_id: modelId,
-      gtts_lang: gttsLang,
-      gtts_accent: gttsAccent,
-    };
-
-    resetProgress();
-
-    const pythonCmd = process.platform === "win32" ? "python" : "python3";
-    const workerPath = path.join(process.cwd(), "convert_worker.py");
-
-    const proc = spawn(pythonCmd, [workerPath], {
-      stdio: ["pipe", "pipe", "pipe"],
-      cwd: process.cwd(),
-    });
-
-    activeProcess = proc;
-
-    proc.stdin.write(JSON.stringify(params));
-    proc.stdin.end();
-
-    let stdout = "";
-
-    proc.stdout.on("data", (data: Buffer) => {
-      stdout += data.toString();
-      const lines = data.toString().trim().split("\n");
-      for (const line of lines) {
-        try {
-          const parsed = JSON.parse(line);
-          if (parsed.current !== undefined) {
-            updateProgress(parsed);
-          }
-          if (parsed.done) {
-            updateProgress({ done: true, output: parsed.output });
-          }
-          if (parsed.error) {
-            updateProgress({ error: parsed.error });
-          }
-        } catch {
-          // skip non-json lines
-        }
+      if (engine === "gtts") {
+        buf = await fetchGttsAudio(seg.text, gttsLang, gttsHost);
+      } else {
+        buf = await fetchElevenlabsAudio(seg.text, apiKey, voiceId, modelId);
       }
-    });
 
-    proc.stderr.on("data", (data: Buffer) => {
-      console.error("Python stderr:", data.toString());
-    });
+      if (seg.startMs > audioParts.reduce((a, b) => a + b.length, 0)) {
+        const silenceMs = seg.startMs - audioParts.reduce((a, b) => a + b.length, 0);
+        audioParts.push(Buffer.alloc(Math.round(silenceMs * 1.6)));
+      }
 
-    return new Promise<Response>((resolve) => {
-      proc.on("close", (code) => {
-        activeProcess = null;
-        if (code !== 0) {
-          const progress = getProgress();
-          resolve(
-            NextResponse.json(
-              { error: progress.error || "Conversion failed", partial: progress },
-              { status: 500 }
-            )
-          );
-        } else {
-          const outputName = fs.readdirSync(OUTPUT_DIR).find((f) => f.startsWith("output_") && f.endsWith(".mp3"));
-          resolve(
-            NextResponse.json({
-              success: true,
-              output: outputName || "output_audio.mp3",
-              progress: getProgress(),
-            })
-          );
-        }
-        // Cleanup uploaded srt
-        try { fs.unlinkSync(srtPath); } catch {}
-      });
+      audioParts.push(buf);
+    }
+
+    const finalBuffer = Buffer.concat(audioParts);
+
+    return new NextResponse(finalBuffer, {
+      headers: {
+        "Content-Type": "audio/mpeg",
+        "Content-Disposition": 'attachment; filename="output_audio.mp3"',
+        "Content-Length": finalBuffer.length.toString(),
+      },
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
@@ -124,51 +140,4 @@ export async function POST(req: NextRequest) {
   }
 }
 
-export async function GET() {
-  return NextResponse.json(getProgress());
-}
-
-export async function DELETE() {
-  if (activeProcess) {
-    activeProcess.kill();
-    activeProcess = null;
-  }
-  resetProgress();
-  return NextResponse.json({ cancelled: true });
-}
-
-interface ProgressState {
-  current: number;
-  total: number;
-  start: string;
-  end: string;
-  text: string;
-  speed: number;
-  done: boolean;
-  error: string;
-  output: string;
-}
-
-let progressState: Partial<ProgressState> = {
-  current: 0,
-  total: 0,
-  start: "",
-  end: "",
-  text: "",
-  speed: 0,
-  done: false,
-  error: "",
-  output: "",
-};
-
-function resetProgress() {
-  progressState = { current: 0, total: 0, start: "", end: "", text: "", speed: 0, done: false, error: "", output: "" };
-}
-
-function updateProgress(data: Partial<ProgressState>) {
-  progressState = { ...progressState, ...data };
-}
-
-function getProgress() {
-  return progressState;
-}
+export const runtime = "nodejs";

@@ -2,20 +2,15 @@
 
 Convert subtitle (.srt) files to spoken audio using **gTTS** (free) or **ElevenLabs** API.
 
-A Next.js web UI that calls a Python TTS backend.
+Next.js web app — deployable to Vercel. No Python required.
 
 ## Prerequisites
 
 - **Node.js** 18+
-- **Python** 3.10+ with pip
 
 ## Setup
 
 ```bash
-# Install Python dependencies
-pip install -r requirements.txt
-
-# Install Node dependencies
 npm install
 ```
 
@@ -29,24 +24,27 @@ Open [http://localhost:3000](http://localhost:3000).
 
 1. Drag or select an `.srt` file
 2. Choose engine: **gTTS** (free) or **ElevenLabs** (API key required)
-3. Adjust settings (language, accent, voice ID, max speed)
+3. Adjust language / accent / voice settings
 4. Click **Start Conversion**
 5. Download the resulting MP3
 
 ## Engines
 
-| Engine | Cost | Features |
-|--------|------|----------|
-| gTTS | Free | Google Text-to-Speech, language & accent selection |
-| ElevenLabs | API credits | High-quality voices, speed control, model selection |
+| Engine | Cost | Notes |
+|--------|------|-------|
+| gTTS | Free | Google Text-to-Speech, accent via TLD |
+| ElevenLabs | API credits | Requires API key, voice ID, model ID |
+
+## Deploy to Vercel
+
+```bash
+npx vercel
+```
 
 ## Project Structure
 
 ```
-├── src/app/page.tsx          # Main UI
-├── src/app/api/convert/      # Conversion API (start, progress, cancel)
-├── src/app/api/output/       # Download API
-├── convert_worker.py         # Python TTS worker (called by API)
-├── srt_to_audio.py           # Original Tkinter version
-└── uploads/ & output/        # Temp file directories
+├── src/app/page.tsx             # UI
+├── src/app/api/convert/route.ts # Conversion API (calls TTS directly)
+└── convert_worker.py            # Optional Python worker (for local use)
 ```

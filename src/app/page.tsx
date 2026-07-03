@@ -1,25 +1,13 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
-import { Upload, Play, Square, Download, Eye, EyeOff, ExternalLink } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { Upload, Play, Download, Eye, EyeOff, ExternalLink, Loader2 } from "lucide-react";
 
 type Engine = "gtts" | "elevenlabs";
-
-interface ProgressState {
-  current: number;
-  total: number;
-  start: string;
-  end: string;
-  text: string;
-  speed: number;
-  done: boolean;
-  error: string;
-}
 
 export default function Home() {
   const [srtFile, setSrtFile] = useState<File | null>(null);
   const [engine, setEngine] = useState<Engine>("gtts");
-  const [maxSpeed, setMaxSpeed] = useState("1.5");
   const [apiKey, setApiKey] = useState("");
   const [voiceId, setVoiceId] = useState("");
   const [modelId, setModelId] = useState("eleven_flash_v2_5");
@@ -27,49 +15,22 @@ export default function Home() {
   const [gttsAccent, setGttsAccent] = useState("co.in");
   const [showApi, setShowApi] = useState(false);
   const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState<ProgressState | null>(null);
   const [logs, setLogs] = useState<string[]>(["Ready. Select an SRT file and click Start."]);
-  const [outputFile, setOutputFile] = useState<string | null>(null);
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
 
-  const addLog = useCallback((msg: string) => {
-    setLogs((prev) => [...prev, msg]);
-  }, []);
+  useEffect(() => {
+    return () => {
+      if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+    };
+  }, [downloadUrl]);
 
-  const pollProgress = useCallback(() => {
-    if (pollRef.current) return;
-    pollRef.current = setInterval(async () => {
-      try {
-        const res = await fetch("/api/convert");
-        const data = await res.json();
-        if (data.current !== undefined && data.total > 0) {
-          setProgress(data);
-          addLog(`▶ [${data.current}/${data.total}] ${data.start} → ${data.end} | speed=${data.speed}`);
-        }
-        if (data.done) {
-          setRunning(false);
-          addLog("✅ Conversion complete!");
-          setOutputFile(data.output);
-          if (pollRef.current) clearInterval(pollRef.current);
-          pollRef.current = null;
-        }
-        if (data.error) {
-          setRunning(false);
-          addLog(`❌ Error: ${data.error}`);
-          if (pollRef.current) clearInterval(pollRef.current);
-          pollRef.current = null;
-        }
-      } catch {
-        // ignore poll errors
-      }
-    }, 500);
-  }, [addLog]);
+  const addLog = (msg: string) => setLogs((prev) => [...prev, msg]);
 
   const handleStart = async () => {
     if (!srtFile) {
@@ -82,22 +43,18 @@ export default function Home() {
     }
 
     setRunning(true);
-    setOutputFile(null);
-    setProgress(null);
+    setDownloadUrl(null);
     setLogs(["Starting conversion..."]);
     abortRef.current = new AbortController();
 
     const form = new FormData();
     form.append("srt", srtFile);
     form.append("engine", engine);
-    form.append("maxSpeed", maxSpeed);
     form.append("apiKey", apiKey);
     form.append("voiceId", voiceId);
     form.append("modelId", modelId);
     form.append("gttsLang", gttsLang);
     form.append("gttsAccent", gttsAccent);
-
-    pollProgress();
 
     try {
       const res = await fetch("/api/convert", {
@@ -105,38 +62,31 @@ export default function Home() {
         body: form,
         signal: abortRef.current.signal,
       });
-      const data = await res.json();
-      if (data.success && data.output) {
-        setOutputFile(data.output);
-        addLog("✅ Conversion complete! Download your file below.");
-      } else if (data.error) {
-        addLog(`❌ ${data.error}`);
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Conversion failed" }));
+        addLog(`❌ ${err.error}`);
+        return;
       }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      setDownloadUrl(url);
+      addLog(`✅ Done! (${(blob.size / 1024 / 1024).toFixed(1)} MB) — Click download below.`);
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") {
-        addLog("⏹️ Conversion cancelled.");
+        addLog("⏹️ Cancelled.");
       } else {
-        addLog(`❌ Error: ${err instanceof Error ? err.message : "Unknown"}`);
+        addLog(`❌ ${err instanceof Error ? err.message : "Unknown error"}`);
       }
     } finally {
       setRunning(false);
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
     }
   };
 
-  const handleCancel = async () => {
-    if (abortRef.current) {
-      abortRef.current.abort();
-    }
-    await fetch("/api/convert", { method: "DELETE" });
+  const handleCancel = () => {
+    abortRef.current?.abort();
     setRunning(false);
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -155,21 +105,15 @@ export default function Home() {
         <p className="text-sm text-zinc-500">Convert subtitles to speech via gTTS or ElevenLabs</p>
       </header>
 
-      {/* Source & Settings */}
       <section className="rounded-lg border border-zinc-800 bg-zinc-900 p-5">
         <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-zinc-400">Source &amp; Settings</h2>
-
-        {/* SRT file */}
         <div className="mb-4">
           <label className="mb-1 block text-sm text-zinc-400">SRT file</label>
           {srtFile ? (
             <div className="flex items-center gap-2 rounded bg-zinc-800 px-3 py-2 text-sm">
               <Upload size={14} />
-              <span className="truncate flex-1">{srtFile.name}</span>
-              <button
-                onClick={() => setSrtFile(null)}
-                className="text-xs text-zinc-500 hover:text-zinc-300"
-              >
+              <span className="flex-1 truncate">{srtFile.name}</span>
+              <button onClick={() => setSrtFile(null)} className="text-xs text-zinc-500 hover:text-zinc-300">
                 Change
               </button>
             </div>
@@ -196,17 +140,13 @@ export default function Home() {
             </label>
           )}
         </div>
-
-        {/* Engine */}
-        <div className="mb-4">
+        <div>
           <label className="mb-1 block text-sm text-zinc-400">Engine</label>
           <div className="flex gap-2">
             <button
               onClick={() => setEngine("gtts")}
               className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
-                engine === "gtts"
-                  ? "bg-emerald-600 text-white"
-                  : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+                engine === "gtts" ? "bg-emerald-600 text-white" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
               }`}
             >
               gTTS (Free)
@@ -214,9 +154,7 @@ export default function Home() {
             <button
               onClick={() => setEngine("elevenlabs")}
               className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
-                engine === "elevenlabs"
-                  ? "bg-emerald-600 text-white"
-                  : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+                engine === "elevenlabs" ? "bg-emerald-600 text-white" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
               }`}
             >
               ElevenLabs
@@ -225,7 +163,6 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Engine-specific settings */}
       {engine === "gtts" && (
         <section className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
           <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-zinc-400">Google Text-to-Speech (Free)</h2>
@@ -240,26 +177,24 @@ export default function Home() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm text-zinc-400">Accent / Voice (tld)</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={gttsAccent}
-                  onChange={(e) => setGttsAccent(e.target.value)}
-                  className="flex-1 rounded bg-zinc-800 px-3 py-2 text-sm outline-none ring-1 ring-zinc-700 focus:ring-emerald-500"
-                />
+              <label className="mb-1 flex items-center gap-1 text-sm text-zinc-400">
+                Accent / Voice (tld)
                 <a
                   href="https://gtts.readthedocs.io/en/latest/module.html#localized-accents"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="shrink-0 text-blue-400 hover:text-blue-300"
+                  className="text-blue-400 hover:text-blue-300"
                 >
                   <ExternalLink size={14} />
                 </a>
-              </div>
-              <p className="mt-1 text-xs text-zinc-600">
-                co.in (male), com (female US), co.uk (female UK)
-              </p>
+              </label>
+              <input
+                type="text"
+                value={gttsAccent}
+                onChange={(e) => setGttsAccent(e.target.value)}
+                className="w-full rounded bg-zinc-800 px-3 py-2 text-sm outline-none ring-1 ring-zinc-700 focus:ring-emerald-500"
+              />
+              <p className="mt-1 text-xs text-zinc-600">co.in (male), com (female US), co.uk (female UK)</p>
             </div>
           </div>
         </section>
@@ -310,30 +245,13 @@ export default function Home() {
         </section>
       )}
 
-      {/* Timing */}
-      <section className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
-        <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-zinc-400">Timing</h2>
-        <div className="max-w-xs">
-          <label className="mb-1 block text-sm text-zinc-400">Max Speed</label>
-          <input
-            type="number"
-            step="0.1"
-            min="1"
-            value={maxSpeed}
-            onChange={(e) => setMaxSpeed(e.target.value)}
-            className="w-full rounded bg-zinc-800 px-3 py-2 text-sm outline-none ring-1 ring-zinc-700 focus:ring-emerald-500"
-          />
-        </div>
-      </section>
-
-      {/* Actions */}
       <div className="mt-6 flex items-center gap-3">
         {running ? (
           <button
             onClick={handleCancel}
             className="flex items-center gap-2 rounded bg-red-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700"
           >
-            <Square size={16} /> Cancel
+            <Loader2 size={16} className="animate-spin" /> Converting…
           </button>
         ) : (
           <button
@@ -344,9 +262,10 @@ export default function Home() {
             <Play size={16} /> Start Conversion
           </button>
         )}
-        {outputFile && (
+        {downloadUrl && (
           <a
-            href={`/api/output?file=${outputFile}`}
+            href={downloadUrl}
+            download="output_audio.mp3"
             className="flex items-center gap-2 rounded bg-zinc-800 px-5 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-700"
           >
             <Download size={16} /> Download MP3
@@ -354,23 +273,6 @@ export default function Home() {
         )}
       </div>
 
-      {/* Progress bar */}
-      {progress && progress.total > 0 && (
-        <div className="mt-4">
-          <div className="mb-1 flex items-center justify-between text-xs text-zinc-500">
-            <span>{progress.current} / {progress.total}</span>
-            <span>{Math.round((progress.current / progress.total) * 100)}%</span>
-          </div>
-          <div className="h-2 overflow-hidden rounded-full bg-zinc-800">
-            <div
-              className="h-full rounded-full bg-emerald-500 transition-all duration-300"
-              style={{ width: `${(progress.current / progress.total) * 100}%` }}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Log */}
       <section className="mt-6 rounded-lg border border-zinc-800 bg-zinc-900">
         <h2 className="border-b border-zinc-800 px-5 py-3 text-sm font-semibold uppercase tracking-wider text-zinc-400">
           Progress

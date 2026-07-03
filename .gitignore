@@ -8,7 +8,5 @@ progress.txt
 tts_settings.json
 
 .pnp.*
-.yarn/
 __pycache__/
-yarn.lock
 *.pyc
