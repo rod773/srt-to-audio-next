@@ -13,3 +13,5 @@ __pycache__/
 
 .vercel
 package-lock.json
+tsconfig.tsbuildinfo
+.yarn/install-state.gz
