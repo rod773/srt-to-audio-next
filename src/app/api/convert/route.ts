@@ -87,12 +87,14 @@ export async function POST(req: NextRequest) {
             }
 
             const mergedText = batch.map((s) => s.text).join(" ");
-            const buf = await tts(mergedText, edgeVoice);
             const firstSeg = batch[0];
-            const currentLen = audioParts.reduce((a, b) => a + b.length, 0);
-            if (firstSeg.startMs > currentLen) {
-              audioParts.push(Buffer.alloc(firstSeg.startMs - currentLen));
-            }
+            const lastSeg = batch[batch.length - 1];
+            const targetMs = lastSeg.endMs - firstSeg.startMs;
+            const estimatedNormalMs = Math.max(1, (mergedText.length / 12) * 1000);
+            let speed = estimatedNormalMs / targetMs;
+            speed = Math.max(0.5, Math.min(2.0, speed));
+
+            const buf = await tts(mergedText, edgeVoice, speed);
             audioParts.push(buf);
 
             if (b < batches.length - 1) {

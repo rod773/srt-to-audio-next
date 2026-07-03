@@ -36,10 +36,14 @@ export async function getVoices(): Promise<Voice[]> {
   return res.json();
 }
 
-export async function tts(text: string, voice: string, retries = 3): Promise<Buffer> {
+export function mp3DurationMs(buf: Buffer): number {
+  return Math.floor((buf.length / 6000) * 1000);
+}
+
+export async function tts(text: string, voice: string, speed?: number, retries = 3): Promise<Buffer> {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      return await ttsOnce(text, voice);
+      return await ttsOnce(text, voice, speed);
     } catch (err) {
       if (attempt === retries) throw err;
       await new Promise((r) => setTimeout(r, attempt * 1000));
@@ -48,7 +52,7 @@ export async function tts(text: string, voice: string, retries = 3): Promise<Buf
   throw new Error("tts failed");
 }
 
-function ttsOnce(text: string, voice: string): Promise<Buffer> {
+function ttsOnce(text: string, voice: string, speed?: number): Promise<Buffer> {
   const secMsGec = generateSecMsGec();
   const connId = uuid();
   const wsUrl =
@@ -109,9 +113,10 @@ function ttsOnce(text: string, voice: string): Promise<Buffer> {
 
       const clean = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, " ");
       const escaped = clean.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+      const rateAttr = speed ? ` rate="${speed.toFixed(2)}x"` : "";
       const ssml =
         `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>` +
-        `<voice name='${voice}'>${escaped}</voice></speak>`;
+        `<voice name='${voice}'><prosody${rateAttr}>${escaped}</prosody></voice></speak>`;
 
       const ssmlMsg =
         `X-RequestId:${uuid()}\r\n` +
