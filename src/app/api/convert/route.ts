@@ -45,24 +45,49 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No valid subtitles found" }, { status: 400 });
     }
 
-    const audioParts: Buffer[] = [];
-    for (const seg of segments) {
-      const buf = await tts(seg.text, edgeVoice);
-      const currentLen = audioParts.reduce((a, b) => a + b.length, 0);
-      if (seg.startMs > currentLen) {
-        audioParts.push(Buffer.alloc(seg.startMs - currentLen));
-      }
-      audioParts.push(buf);
-    }
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        const audioParts: Buffer[] = [];
+        try {
+          for (let i = 0; i < segments.length; i++) {
+            const seg = segments[i];
+            const progress = JSON.stringify({
+              type: "progress",
+              segment: i + 1,
+              total: segments.length,
+              text: seg.text,
+            }) + "\n";
+            controller.enqueue(encoder.encode(progress));
 
-    const finalBuffer = Buffer.concat(audioParts);
+            const buf = await tts(seg.text, edgeVoice);
+            const currentLen = audioParts.reduce((a, b) => a + b.length, 0);
+            if (seg.startMs > currentLen) {
+              audioParts.push(Buffer.alloc(seg.startMs - currentLen));
+            }
+            audioParts.push(buf);
+          }
 
-    return new NextResponse(finalBuffer, {
-      headers: {
-        "Content-Type": "audio/mpeg",
-        "Content-Disposition": 'attachment; filename="output_audio.mp3"',
-        "Content-Length": finalBuffer.length.toString(),
+          const finalBuffer = Buffer.concat(audioParts);
+          const doneMsg = JSON.stringify({
+            type: "done",
+            audio: finalBuffer.toString("base64"),
+          }) + "\n";
+          controller.enqueue(encoder.encode(doneMsg));
+          controller.close();
+        } catch (err) {
+          const errMsg = JSON.stringify({
+            type: "error",
+            message: err instanceof Error ? err.message : "Unknown error",
+          }) + "\n";
+          controller.enqueue(encoder.encode(errMsg));
+          controller.close();
+        }
       },
+    });
+
+    return new Response(stream, {
+      headers: { "Content-Type": "application/x-ndjson" },
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";

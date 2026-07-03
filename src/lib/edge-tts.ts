@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-import crypto from "crypto";
+import * as crypto from "crypto";
 
 const TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
 const BASE_URL = "speech.platform.bing.com/consumer/speech/synthesize/readaloud";
@@ -14,7 +14,7 @@ export interface Voice {
   Locale: string;
 }
 
-function uuid() {
+function uuid(): string {
   return crypto.randomUUID().replaceAll("-", "");
 }
 
@@ -23,12 +23,7 @@ function generateSecMsGec(): string {
   const now = Math.floor(Date.now() / 1000) + WIN_EPOCH;
   const rounded = now - (now % 300);
   const ticks = rounded * 1e7;
-  const hash = crypto.createHash("sha256").update(`${ticks}${TOKEN}`).digest("hex");
-  return hash.toUpperCase();
-}
-
-function generateMuid(): string {
-  return crypto.randomBytes(16).toString("hex").toUpperCase();
+  return crypto.createHash("sha256").update(`${ticks}${TOKEN}`).digest("hex").toUpperCase();
 }
 
 export async function getVoices(): Promise<Voice[]> {
@@ -43,7 +38,6 @@ export async function getVoices(): Promise<Voice[]> {
 
 export function tts(text: string, voice: string): Promise<Buffer> {
   const secMsGec = generateSecMsGec();
-  const muid = generateMuid();
   const connId = uuid();
   const wsUrl =
     `wss://${BASE_URL}/edge/v1?` +
@@ -63,26 +57,27 @@ export function tts(text: string, voice: string): Promise<Buffer> {
           ` (KHTML, like Gecko) Chrome/${CHROMIUM_MAJOR}.0.0.0 Safari/537.36 Edg/${CHROMIUM_MAJOR}.0.0.0`,
         "Accept-Encoding": "gzip, deflate, br",
         "Accept-Language": "en-US,en;q=0.9",
-        "Cookie": `muid=${muid};`,
       },
     });
 
     const audioData: Buffer[] = [];
     let resolved = false;
-    let lastResponse = "";
+    const debug: string[] = [];
 
     const done = (err?: Error) => {
       if (resolved) return;
       resolved = true;
       try { ws.close(); } catch {}
-      if (err) reject(err);
+      if (err) reject(new Error(`${err.message}\n${debug.join("\n")}`));
       else if (audioData.length > 0) resolve(Buffer.concat(audioData));
-      else reject(new Error(lastResponse ? `TTS error: ${lastResponse.slice(0, 200)}` : "No audio data received"));
+      else reject(new Error(`No audio data received\n${debug.join("\n")}`));
     };
 
     const timeout = setTimeout(() => done(new Error("TTS timed out")), 60000);
 
     ws.on("open", () => {
+      debug.push("WebSocket opened");
+
       const config = {
         context: {
           synthesis: {
@@ -94,54 +89,60 @@ export function tts(text: string, voice: string): Promise<Buffer> {
         },
       };
       ws.send(
-        `X-Timestamp:${new Date().toString()}\r\n` +
         `Content-Type:application/json; charset=utf-8\r\n` +
         `Path:speech.config\r\n\r\n` +
         `${JSON.stringify(config)}\r\n`
       );
+      debug.push("Config sent");
 
       const clean = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, " ");
       const escaped = clean.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
       const ssml =
+        `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>` +
+        `<voice name='${voice}'>${escaped}</voice></speak>`;
+
+      const ssmlMsg =
         `X-RequestId:${uuid()}\r\n` +
         `Content-Type:application/ssml+xml\r\n` +
         `X-Timestamp:${new Date().toString()}Z\r\n` +
         `Path:ssml\r\n\r\n` +
-        `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>` +
-        `<voice name='${voice}'><prosody pitch='+0Hz' rate='+0%' volume='+0%'>` +
-        `${escaped}</prosody></voice></speak>`;
-      ws.send(ssml);
+        ssml;
+      ws.send(ssmlMsg);
+      debug.push(`SSML sent (${voice})`);
     });
 
-    ws.on("message", (data, isBinary) => {
+    ws.on("message", (data: Buffer, isBinary: boolean) => {
       if (isBinary) {
-        const buf = data as Buffer;
-        if (buf.length < 2) return;
-        const headerLen = buf.readUInt16BE(0);
-        if (headerLen + 2 > buf.length) return;
-        const headerStr = buf.subarray(2, headerLen + 2).toString();
-        const payload = buf.subarray(headerLen + 2);
-        if (headerStr.includes("Path:audio\r\n") && payload.length > 0) {
-          audioData.push(payload);
+        if (data.length < 2) return;
+        const hdrLen = data.readUInt16BE(0);
+        if (hdrLen + 2 > data.length) return;
+        const hdrStr = data.subarray(2, hdrLen + 2).toString();
+        if (hdrStr.includes("Content-Type:audio")) {
+          const payload = data.subarray(hdrLen + 2);
+          if (payload.length > 0) {
+            audioData.push(payload);
+          }
         }
       } else {
         const msg = data.toString();
+        const pathMatch = msg.match(/Path:(\S+)/);
+        const path = pathMatch ? pathMatch[1] : "?";
+        debug.push(`Text msg path=${path} (${msg.slice(0, 80)}...)`);
         if (msg.includes("turn.end")) {
           clearTimeout(timeout);
           done();
-        } else if (msg.includes("Path:response")) {
-          lastResponse = msg;
         }
       }
     });
 
-    ws.on("error", (err) => {
+    ws.on("error", (err: Error) => {
       clearTimeout(timeout);
       done(new Error(`WebSocket error: ${err.message}`));
     });
 
-    ws.on("close", () => {
+    ws.on("close", (code?: number, reason?: Buffer) => {
       clearTimeout(timeout);
+      debug.push(`Close code=${code} reason=${reason ? reason.toString() : "none"}`);
       done();
     });
   });

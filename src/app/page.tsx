@@ -38,8 +38,8 @@ export default function Home() {
       .then((data) => {
         if (Array.isArray(data)) {
           setVoices(data);
-          const en = data.find((v: Voice) => v.ShortName === "en-US-AriaNeural");
-          if (en) setEdgeVoice(en.ShortName);
+const en = data.find((v: Voice) => v.ShortName === "en-US-GuyNeural");
+if (en) setEdgeVoice(en.ShortName);
         }
       })
       .catch(() => {});
@@ -78,10 +78,38 @@ export default function Home() {
         return;
       }
 
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      setDownloadUrl(url);
-      addLog(`✅ Done! (${(blob.size / 1024 / 1024).toFixed(1)} MB) — Click download below.`);
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const data = JSON.parse(line);
+            if (data.type === "progress") {
+              const short = data.text.length > 60 ? data.text.slice(0, 60) + "…" : data.text;
+              addLog(`🎤 [${data.segment}/${data.total}] ${short}`);
+            } else if (data.type === "done") {
+              const binaryStr = atob(data.audio);
+              const bytes = new Uint8Array(binaryStr.length);
+              for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+              const blob = new Blob([bytes], { type: "audio/mpeg" });
+              const url = URL.createObjectURL(blob);
+              setDownloadUrl(url);
+              addLog(`✅ Done! (${(blob.size / 1024 / 1024).toFixed(1)} MB)`);
+            } else if (data.type === "error") {
+              addLog(`❌ ${data.message}`);
+            }
+          } catch {}
+        }
+      }
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") {
         addLog("⏹️ Cancelled.");
