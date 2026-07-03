@@ -2,7 +2,13 @@ node_modules/
 .next/
 .env
 uploads/
-output/
+/output/
 *.mp3
 progress.txt
 tts_settings.json
+
+.pnp.*
+.yarn/
+__pycache__/
+yarn.lock
+*.pyc
