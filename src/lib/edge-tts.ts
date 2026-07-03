@@ -113,7 +113,7 @@ function ttsOnce(text: string, voice: string, speed?: number): Promise<Buffer> {
 
       const clean = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, " ");
       const escaped = clean.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-      const rateAttr = speed ? ` rate="${speed.toFixed(2)}x"` : "";
+      const rateAttr = speed ? ` rate="${speed.toFixed(2)}"` : "";
       const ssml =
         `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>` +
         `<voice name='${voice}'><prosody${rateAttr}>${escaped}</prosody></voice></speak>`;
