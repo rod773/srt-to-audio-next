@@ -568,21 +568,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/node@npm:*":
+"@types/node@npm:^26.1.0":
   version: 26.1.0
   resolution: "@types/node@npm:26.1.0"
   dependencies:
     undici-types: "npm:~8.3.0"
   checksum: 10c0/61c22ad1ef215e24138cb8b7368fb68bab9de4c123b3f23d411749b015ba1b7d22f878ad54add26a0b69068d7e07c04af665069d8571b6c6c3b9b2fb73b7bd91
-  languageName: node
-  linkType: hard
-
-"@types/node@npm:^22.0.0":
-  version: 22.20.0
-  resolution: "@types/node@npm:22.20.0"
-  dependencies:
-    undici-types: "npm:~6.21.0"
-  checksum: 10c0/55d78223205bd5f81f043d71b7a5c8d8854b9ef44ef81291680943adb27fa5ba1f092658c87183d5bc8cf6baf6a57b81dad966eb3afa452cc301a615b6d9b20e
   languageName: node
   linkType: hard
 
@@ -601,15 +592,6 @@ __metadata:
   dependencies:
     csstype: "npm:^3.2.2"
   checksum: 10c0/bc2c4af96b3e480604424de70d5ebda90c5f4b485df471858c0bc2d7d70364b606ec3c4d8579f94f01aa0c6c0591f56bcf14cba5689f5eea4b74250ccdc3a232
-  languageName: node
-  linkType: hard
-
-"@types/ws@npm:^8":
-  version: 8.18.1
-  resolution: "@types/ws@npm:8.18.1"
-  dependencies:
-    "@types/node": "npm:*"
-  checksum: 10c0/61aff1129143fcc4312f083bc9e9e168aa3026b7dd6e70796276dcfb2c8211c4292603f9c4864fae702f2ed86e4abd4d38aa421831c2fd7f856c931a481afbab
   languageName: node
   linkType: hard
 
@@ -1032,17 +1014,15 @@ __metadata:
   resolution: "srt-to-audio-next@workspace:."
   dependencies:
     "@tailwindcss/postcss": "npm:^4.0.0"
-    "@types/node": "npm:^22.0.0"
+    "@types/node": "npm:^26.1.0"
     "@types/react": "npm:^19.0.0"
     "@types/react-dom": "npm:^19.0.0"
-    "@types/ws": "npm:^8"
     lucide-react: "npm:^0.468.0"
     next: "npm:^15.2.0"
     react: "npm:^19.0.0"
     react-dom: "npm:^19.0.0"
     tailwindcss: "npm:^4.0.0"
     typescript: "npm:^5.7.0"
-    ws: "npm:^8.21.0"
   languageName: unknown
   linkType: soft
 
@@ -1103,31 +1083,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"undici-types@npm:~6.21.0":
-  version: 6.21.0
-  resolution: "undici-types@npm:6.21.0"
-  checksum: 10c0/c01ed51829b10aa72fc3ce64b747f8e74ae9b60eafa19a7b46ef624403508a54c526ffab06a14a26b3120d055e1104d7abe7c9017e83ced038ea5cf52f8d5e04
-  languageName: node
-  linkType: hard
-
 "undici-types@npm:~8.3.0":
   version: 8.3.0
   resolution: "undici-types@npm:8.3.0"
   checksum: 10c0/c8aa7e2fbebfce519654dafadc0ece59be888d2ccaf180fb4495da875e7b536d2456345c384069c7e6f3e9c9ab7435f074957da306f142343eee86ff8048855a
-  languageName: node
-  linkType: hard
-
-"ws@npm:^8.21.0":
-  version: 8.21.0
-  resolution: "ws@npm:8.21.0"
-  peerDependencies:
-    bufferutil: ^4.0.1
-    utf-8-validate: ">=5.0.2"
-  peerDependenciesMeta:
-    bufferutil:
-      optional: true
-    utf-8-validate:
-      optional: true
-  checksum: 10c0/ef4a243476283fc49bc7550966c4af4aa0eef56273837211e700de3b664e08604a760cdddcb5ba43c049140e74ccfec5b0ee0bb439e08c2adf9138902fdde5f9
   languageName: node
   linkType: hard
