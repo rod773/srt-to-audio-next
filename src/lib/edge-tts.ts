@@ -69,6 +69,7 @@ export function tts(text: string, voice: string): Promise<Buffer> {
 
     const audioData: Buffer[] = [];
     let resolved = false;
+    let lastResponse = "";
 
     const done = (err?: Error) => {
       if (resolved) return;
@@ -76,7 +77,7 @@ export function tts(text: string, voice: string): Promise<Buffer> {
       try { ws.close(); } catch {}
       if (err) reject(err);
       else if (audioData.length > 0) resolve(Buffer.concat(audioData));
-      else reject(new Error("No audio data received"));
+      else reject(new Error(lastResponse ? `TTS error: ${lastResponse.slice(0, 200)}` : "No audio data received"));
     };
 
     const timeout = setTimeout(() => done(new Error("TTS timed out")), 60000);
@@ -99,14 +100,16 @@ export function tts(text: string, voice: string): Promise<Buffer> {
         `${JSON.stringify(config)}\r\n`
       );
 
-      const escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+      const clean = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, " ");
+      const escaped = clean.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
       const ssml =
         `X-RequestId:${uuid()}\r\n` +
         `Content-Type:application/ssml+xml\r\n` +
         `X-Timestamp:${new Date().toString()}Z\r\n` +
         `Path:ssml\r\n\r\n` +
         `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>` +
-        `<voice name='${voice}'>${escaped}</voice></speak>`;
+        `<voice name='${voice}'><prosody pitch='+0Hz' rate='+0%' volume='+0%'>` +
+        `${escaped}</prosody></voice></speak>`;
       ws.send(ssml);
     });
 
@@ -126,6 +129,8 @@ export function tts(text: string, voice: string): Promise<Buffer> {
         if (msg.includes("turn.end")) {
           clearTimeout(timeout);
           done();
+        } else if (msg.includes("Path:response")) {
+          lastResponse = msg;
         }
       }
     });
