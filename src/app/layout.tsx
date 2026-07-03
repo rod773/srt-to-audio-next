@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "SRT → Audio Converter",
-  description: "Convert subtitle files to audio using gTTS or ElevenLabs",
+  description: "Convert SRT subtitle files to spoken audio via Microsoft Edge TTS",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
