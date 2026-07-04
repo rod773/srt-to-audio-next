@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
             audioParts.push(buf);
 
             if (b < batches.length - 1) {
-              await sleep(100);
+              await sleep(300);
             }
           }
 

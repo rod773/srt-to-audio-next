@@ -3,8 +3,8 @@ import * as crypto from "crypto";
 
 const TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
 const BASE_URL = "speech.platform.bing.com/consumer/speech/synthesize/readaloud";
-const CHROMIUM_VERSION = "143.0.3650.75";
-const CHROMIUM_MAJOR = "143";
+const CHROMIUM_VERSION = "140.0.7339.54";
+const CHROMIUM_MAJOR = "140";
 
 export interface Voice {
   Name: string;
@@ -40,13 +40,17 @@ export function mp3DurationMs(buf: Buffer): number {
   return Math.floor((buf.length / 6000) * 1000);
 }
 
-export async function tts(text: string, voice: string, speed?: number, retries = 3): Promise<Buffer> {
+export async function tts(text: string, voice: string, speed?: number, retries = 5): Promise<Buffer> {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       return await ttsOnce(text, voice, speed);
     } catch (err) {
       if (attempt === retries) throw err;
-      await new Promise((r) => setTimeout(r, attempt * 1000));
+      const msg = err instanceof Error ? err.message : "";
+      const isClosed = msg.includes("closed abnormally") || msg.includes("1006");
+      const base = isClosed ? 2000 : 500;
+      const delay = base * Math.pow(2, attempt - 1) + Math.random() * 1000;
+      await new Promise((r) => setTimeout(r, Math.min(delay, 30000)));
     }
   }
   throw new Error("tts failed");
@@ -74,6 +78,7 @@ function ttsOnce(text: string, voice: string, speed?: number): Promise<Buffer> {
         "Accept-Encoding": "gzip, deflate, br",
         "Accept-Language": "en-US,en;q=0.9",
       },
+      perMessageDeflate: false,
     });
 
     const audioData: Buffer[] = [];
@@ -94,61 +99,76 @@ function ttsOnce(text: string, voice: string, speed?: number): Promise<Buffer> {
     ws.on("open", () => {
       debug.push("WebSocket opened");
 
-      const config = {
-        context: {
-          synthesis: {
-            audio: {
-              metadataoptions: { sentenceBoundaryEnabled: false, wordBoundaryEnabled: false },
-              outputFormat: "audio-24khz-48kbitrate-mono-mp3",
+      const send = () => {
+        const config = {
+          context: {
+            synthesis: {
+              audio: {
+                metadataoptions: { sentenceBoundaryEnabled: false, wordBoundaryEnabled: false },
+                outputFormat: "audio-24khz-48kbitrate-mono-mp3",
+              },
             },
           },
-        },
+        };
+        ws.send(
+          `Content-Type:application/json; charset=utf-8\r\n` +
+          `Path:speech.config\r\n\r\n` +
+          `${JSON.stringify(config)}\r\n`
+        );
+        debug.push("Config sent");
+
+        const clean = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, " ");
+        const escaped = clean.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+        const rateAttr = speed ? ` rate="${speed.toFixed(2)}"` : "";
+        const ssml =
+          `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>` +
+          `<voice name='${voice}'><prosody${rateAttr}>${escaped}</prosody></voice></speak>`;
+
+        const ssmlMsg =
+          `X-RequestId:${uuid()}\r\n` +
+          `Content-Type:application/ssml+xml\r\n` +
+          `X-Timestamp:${new Date().toISOString()}\r\n` +
+          `Path:ssml\r\n\r\n` +
+          ssml;
+        ws.send(ssmlMsg);
+        debug.push(`SSML sent (${voice})`);
       };
-      ws.send(
-        `Content-Type:application/json; charset=utf-8\r\n` +
-        `Path:speech.config\r\n\r\n` +
-        `${JSON.stringify(config)}\r\n`
-      );
-      debug.push("Config sent");
 
-      const clean = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, " ");
-      const escaped = clean.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-      const rateAttr = speed ? ` rate="${speed.toFixed(2)}"` : "";
-      const ssml =
-        `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>` +
-        `<voice name='${voice}'><prosody${rateAttr}>${escaped}</prosody></voice></speak>`;
-
-      const ssmlMsg =
-        `X-RequestId:${uuid()}\r\n` +
-        `Content-Type:application/ssml+xml\r\n` +
-        `X-Timestamp:${new Date().toString()}Z\r\n` +
-        `Path:ssml\r\n\r\n` +
-        ssml;
-      ws.send(ssmlMsg);
-      debug.push(`SSML sent (${voice})`);
+      setTimeout(send, 50);
     });
 
-    ws.on("message", (data: Buffer, isBinary: boolean) => {
-      if (isBinary) {
-        if (data.length < 2) return;
-        const hdrLen = data.readUInt16BE(0);
-        if (hdrLen + 2 > data.length) return;
-        const hdrStr = data.subarray(2, hdrLen + 2).toString();
-        if (hdrStr.includes("Content-Type:audio")) {
-          const payload = data.subarray(hdrLen + 2);
-          if (payload.length > 0) {
-            audioData.push(payload);
-          }
+    ws.on("message", (data: any, isBinary: any) => {
+      const isBuf = Buffer.isBuffer(data);
+      const looksBinary = isBuf || typeof data !== "string";
+
+      if (looksBinary) {
+        const buf = isBuf ? data : Buffer.from(data);
+        if (buf.length < 2) return;
+
+        const hdrLen = buf.readUInt16BE(0);
+        if (hdrLen + 2 > buf.length) return;
+
+        const hdrStr = buf.subarray(2, hdrLen + 2).toString();
+        const payload = buf.subarray(hdrLen + 2);
+
+        const hdrSaysAudio =
+          hdrStr.includes("Content-Type:audio") ||
+          hdrStr.includes("Content-Type: audio") ||
+          hdrStr.includes("audio");
+
+        if (payload.length > 0 && hdrSaysAudio) {
+          audioData.push(payload);
         }
-      } else {
-        const msg = data.toString();
-        const pathMatch = msg.match(/Path:(\S+)/);
-        const path = pathMatch ? pathMatch[1] : "?";
-        debug.push(`Text msg path=${path} (${msg.slice(0, 80)}...)`);
-        if (msg.includes("turn.end")) {
-          clearTimeout(timeout);
-          done();
-        }
+        return;
+      }
+
+      const msg = String(data);
+      const pathMatch = msg.match(/Path:(\S+)/);
+      const path = pathMatch ? pathMatch[1] : "?";
+      debug.push(`Text msg path=${path} (${msg.slice(0, 80)}...)`);
+      if (msg.includes("turn.end")) {
+        clearTimeout(timeout);
+        done();
       }
     });
 
@@ -160,7 +180,13 @@ function ttsOnce(text: string, voice: string, speed?: number): Promise<Buffer> {
     ws.on("close", (code?: number, reason?: Buffer) => {
       clearTimeout(timeout);
       debug.push(`Close code=${code} reason=${reason ? reason.toString() : "none"}`);
-      done();
+
+      if (code === 1006) {
+        done(new Error("TTS connection closed abnormally"));
+      } else {
+        setTimeout(() => done(), 300);
+      }
     });
   });
 }
+ 
